@@ -1,0 +1,215 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+	xmlns:int-xml="http://www.springframework.org/schema/integration/xml"
+	xmlns:int="http://www.springframework.org/schema/integration"
+	xmlns:int-jms="http://www.springframework.org/schema/integration/jms"
+	xmlns:int-sftp="http://www.springframework.org/schema/integration/sftp"
+	xmlns:file="http://www.springframework.org/schema/integration/file"
+    xmlns:jms="http://www.springframework.org/schema/jms"
+    xmlns:jdbc="http://www.springframework.org/schema/jdbc"
+    xmlns:int-jdbc="http://www.springframework.org/schema/integration/jdbc"
+	xmlns:util="http://www.springframework.org/schema/util"
+	xmlns:context="http://www.springframework.org/schema/context"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"  
+	xsi:schemaLocation="http://www.springframework.org/schema/beans
+			http://www.springframework.org/schema/beans/spring-beans.xsd
+			http://www.springframework.org/schema/context  
+    		http://www.springframework.org/schema/context/spring-context.xsd  
+			http://www.springframework.org/schema/integration
+			http://www.springframework.org/schema/integration/spring-integration.xsd
+			http://www.springframework.org/schema/integration/xml
+			http://www.springframework.org/schema/integration/xml/spring-integration-xml.xsd
+			http://www.springframework.org/schema/jms 
+			http://www.springframework.org/schema/jms/spring-jms.xsd
+			http://www.springframework.org/schema/integration/jms
+			http://www.springframework.org/schema/integration/jms/spring-integration-jms.xsd
+			http://www.springframework.org/schema/integration/sftp
+			http://www.springframework.org/schema/integration/sftp/spring-integration-sftp.xsd
+			http://www.springframework.org/schema/integration/file
+			http://www.springframework.org/schema/integration/file/spring-integration-file.xsd
+			http://www.springframework.org/schema/integration/jdbc
+			http://www.springframework.org/schema/integration/jdbc/spring-integration-jdbc.xsd
+			http://www.springframework.org/schema/jdbc
+			http://www.springframework.org/schema/jdbc/spring-jdbc.xsd
+			http://www.springframework.org/schema/util
+			http://www.springframework.org/schema/util/spring-util.xsd"
+>
+
+<int:channel id="outbound"/>
+<int:channel id="joinChannel" />
+<!-- 
+	<int:publish-subscribe-channel id="" ></int:publish-subscribe-channel>
+ -->
+ <int:channel id="jdbcInboundChannel" datatype="com.fil.rcsm.model.jaxb.FlightInfo" />
+<int:channel id="serviceChannel"/>
+<int:channel id="receiveChannel"/>
+<int:channel id="unMarshallChannel">
+ <int:interceptors> 
+   <!-- <int:wire-tap  channel="persistenceChannel" /> -->
+ </int:interceptors>
+</int:channel>
+<int:channel id="flowIgnitionChannel"></int:channel>
+<int:channel id="flowSuppressionChannel"></int:channel>
+<int:channel id="xmlStringOutputChannel"></int:channel>
+<int:channel id="messageReceivedJMSChannel"></int:channel>
+
+<int:channel id="jdbcInboundPollerChannel"></int:channel>
+
+
+<!-- <int:channel id="persistenceChannel"></int:channel> -->
+<!-- 
+	<int-jdbc:inbound-channel-adapter channel="jdbcInboundPollerChannel" query="select * from runwayAvailability" data-source="dataSource" >
+		<int:poller fixed-rate="20000" />
+	</int-jdbc:inbound-channel-adapter> -->
+   
+<!-- 	<int:service-activator input-channel="jdbcInboundPollerChannel" 
+	  output-channel="nullChannel"
+	  method="handleEvent" ref="messageHandler">
+	</int:service-activator>
+ -->
+<!-- <context:property-placeholder location="classpath:sftp.properties"/> -->
+<!-- SFTP Inbound Channel Adapter -->
+   
+    <int-sftp:inbound-channel-adapter id="sftpInbondAdapter"
+			auto-startup="false"
+			channel="receiveChannel"
+			session-factory="sftpSessionFactory"
+			local-directory="/home/ubuntu/localDir"
+			remote-directory="/home/hadoop/data"
+			auto-create-local-directory="true"
+			delete-remote-files="false"
+			filename-pattern="FlightIn*.xml">
+		<int:poller fixed-rate="10000" max-messages-per-poll="1"/>
+	</int-sftp:inbound-channel-adapter>
+	
+	<file:file-to-string-transformer id="transformer" input-channel="receiveChannel" 
+	output-channel="serviceChannel" />
+	  	
+	<bean id="sftpSessionFactory" class="org.springframework.integration.file.remote.session.CachingSessionFactory">
+		<constructor-arg ref="defaultSftpSessionFactory" />
+	</bean>
+	
+	<bean id="defaultSftpSessionFactory"
+			class="org.springframework.integration.sftp.session.DefaultSftpSessionFactory">
+		<property name="host" value="localhost"/>
+		<property name="privateKey" value="classpath:META-INF/keys/hadoop.pem"/>
+	 <!--
+	  	<property name="privateKeyPassphrase" value="${passphrase}"/>
+	 -->
+	 	<property name="port" value="22"/>
+		<property name="user" value="hadoop"/>
+	</bean>
+
+
+<!--  JAXB Marshalling transformer to generate object from XML -->    
+<int-xml:unmarshalling-transformer id="marshallMessage" unmarshaller="xmlUnMarshaller" 
+    							input-channel="serviceChannel"
+    							output-channel="unMarshallChannel" />
+
+<!-- JMS Message Driven Channel Adapter -->
+<int:service-activator  input-channel="unMarshallChannel"
+                        output-channel="outbound" 
+                        ref="messageHandler"
+                        method="receiveMessage" 
+                        requires-reply="true"/>
+
+ <!-- <int:object-to-json-transformer input-channel="outbound" output-channel="xmlStringOutputChannel" result-type="STRING"></int:object-to-json-transformer>
+  -->
+ <int-xml:marshalling-transformer marshaller="xmlUnMarshaller" 
+    input-channel="outbound" output-channel="xmlStringOutputChannel" result-transformer="transformer"></int-xml:marshalling-transformer>
+ 
+ <bean id="transformer" class="org.springframework.integration.xml.transformer.ResultToStringTransformer" />
+ 
+ <int-jms:outbound-gateway id="jmsOut" request-channel="xmlStringOutputChannel"  
+                                  connection-factory="mqConnectionFactory" request-destination="inputQueue"
+                                  delivery-persistent="true" requires-reply="false"/>
+
+<int-jms:message-driven-channel-adapter channel="messageReceivedJMSChannel" connection-factory="mqConnectionFactory" destination="inputQueue"/>
+
+
+<int:service-activator input-channel="messageReceivedJMSChannel" 
+					   output-channel="nullChannel"
+					   method="handleCANS" ref="messageHandler">
+</int:service-activator>
+
+<!-- <int:service-activator input-channel="messageReceivedJMSChannel" 
+					   output-channel="nullChannel"
+					   method="handleFLRS" ref="messageHandler">
+</int:service-activator>
+
+<int:service-activator input-channel="messageReceivedJMSChannel" 
+					   output-channel="nullChannel"
+					   method="handleFCRS" ref="messageHandler">
+</int:service-activator>
+
+<int:service-activator input-channel="messageReceivedJMSChannel" 
+					   output-channel="nullChannel"
+					   method="handleCRNS" ref="messageHandler">
+</int:service-activator>
+ -->
+   
+<!-- <int:service-activator input-channel="jdbcInboundPollerChannel" 
+					   output-channel="nullChannel"
+					   method="handleEvent" ref="messageHandler">
+</int:service-activator>
+ -->                                   
+<bean id="inputQueue" class="com.ibm.mq.jms.MQQueue">
+        <constructor-arg index="0">
+            <value>INPUT.QUEUE</value>
+        </constructor-arg> 
+</bean>
+ 
+ <bean id="mqConnectionFactory" class="com.ibm.mq.jms.MQQueueConnectionFactory">
+    <property name="hostName">
+        <!-- <value>172.31.14.18</value>
+         -->
+         <value>localhost</value>
+    </property>
+    <property name="port">
+        <value>1414</value>
+    </property>
+    <property name="queueManager">
+        <value>QM1</value>
+    </property>
+    <property name="transportType">
+        <value>1</value>
+    </property>
+</bean>
+
+  <!-- Pooled Spring connection factory -->
+  <bean id="connectionFactory"
+    class="org.springframework.jms.connection.CachingConnectionFactory">
+    <constructor-arg ref="mqConnectionFactory" />
+  </bean>
+ 
+ <!--
+ <int-jdbc:inbound-channel-adapter channel="inboundChannel" data-source="dataSource">
+   <int:poller ></int:poller>
+ </int-jdbc:inbound-channel-adapter>
+  -->
+ 
+ <bean id="xmlUnMarshaller" name="xmlUnMarshaller" class="org.springframework.oxm.jaxb.Jaxb2Marshaller">
+    <property name="classesToBeBound">
+        <list value-type="java.lang.Class">
+            <value>com.fil.rcsm.model.jaxb.FlightInfo</value>
+        </list>
+    </property>   
+</bean>   	
+
+<bean id="messageHandler" class="com.acme.message.handler.MessageHandler"></bean>
+<bean id="eventListener" class="com.fil.rcsm.eventing.FlightLandedListener"></bean>
+
+<bean id="dataSource" class="oracle.jdbc.pool.OracleDataSource" destroy-method="close">
+       <property name="connectionCachingEnabled" value="true" />
+       <property name="URL"      value="jdbc:oracle:thin:@172.31.4.117:1521:xe" />
+       <property name="password" value="test" />
+       <property name="user"     value="test" />
+       <property name="connectionCacheProperties">
+          <props merge="default">
+             <prop key="MinLimit">3</prop>
+             <prop key="MaxLimit">20</prop>
+          </props>
+       </property>
+</bean>				
+          
+</beans>

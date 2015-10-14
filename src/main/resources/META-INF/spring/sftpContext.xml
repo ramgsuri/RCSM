@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+	xmlns:int-xml="http://www.springframework.org/schema/integration/xml"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:int="http://www.springframework.org/schema/integration"
+	xmlns:file="http://www.springframework.org/schema/integration/file"
+	xmlns:jms="http://www.springframework.org/schema/integration/jms"
+	xmlns:int-sftp="http://www.springframework.org/schema/integration/sftp"
+	xmlns:int-jdbc="http://www.springframework.org/schema/integration/jdbc"
+	xmlns:jdbc="http://www.springframework.org/schema/jdbc"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans
+			http://www.springframework.org/schema/beans/spring-beans.xsd
+			http://www.springframework.org/schema/integration/xml
+			http://www.springframework.org/schema/integration/xml/spring-integration-xml.xsd
+			http://www.springframework.org/schema/integration
+			http://www.springframework.org/schema/integration/spring-integration.xsd
+			http://www.springframework.org/schema/integration/file
+			http://www.springframework.org/schema/integration/file/spring-integration-file.xsd
+			http://www.springframework.org/schema/integration/jms
+			http://www.springframework.org/schema/integration/jms/spring-integration-jms.xsd
+			http://www.springframework.org/schema/integration/sftp
+    		http://www.springframework.org/schema/integration/sftp/spring-integration-sftp.xsd
+    		http://www.springframework.org/schema/jdbc
+    		http://www.springframework.org/schema/jdbc/spring-jdbc.xsd
+    		http://www.springframework.org/schema/integration/jdbc
+    		http://www.springframework.org/schema/integration/jdbc/spring-integration-jdbc.xsd
+			">
+
+	<int:channel id="sftpOutbound" />
+	<int:channel id="jdbcInboundPollerChannel" />
+	<int:channel id="unMarshallChannel" />
+	<int:channel id="receiveChannel" />
+	<int:channel id="serviceChannel1" />
+	<int:channel id="queueChannel" />
+	<int:channel id="parkingLotQueueChannel" />
+	 <int:channel id="processParkingChannel" />
+	<!-- <int:channel id="toStringChannel" /> -->
+
+	<!-- Datasource -->
+
+	<bean id="dataSource" class="oracle.jdbc.pool.OracleDataSource"
+		destroy-method="close">
+		<property name="connectionCachingEnabled" value="true" />
+		<property name="URL" value="jdbc:oracle:thin:@172.31.4.117:1521:xe" />
+		<property name="password" value="test" />
+		<property name="user" value="test" />
+		<property name="connectionCacheProperties">
+			<props merge="default">
+				<prop key="MinLimit">3</prop>
+				<prop key="MaxLimit">20</prop>
+			</props>
+		</property>
+	</bean>
+
+	<!-- <int-jdbc:inbound-channel-adapter channel="jdbcInboundPollerChannel" 
+		query="select * from runwayAvailability" data-source="dataSource" row-mapper="rowMapper"> 
+		<int:poller fixed-rate="1000" /> </int-jdbc:inbound-channel-adapter> -->
+<!-- 	<bean id="rowMapper" class="com.fil.rcsm.rowMapper.RunwayAvailRowMapper" />
+ -->
+	<!-- <int:service-activator input-channel="jdbcInboundPollerChannel"
+		output-channel="nullChannel" method="handleEvent" ref="handler">
+	</int:service-activator>
+
+	<bean id="handler" class="com.fil.rcsm.PollHandler" />
+ -->
+	<!-- SFTP settings -->
+	<int-sftp:inbound-channel-adapter id="sftpInbound"
+		channel="receiveChannel" session-factory="sftpSessionFactory"
+		filename-pattern="Flight*.xml" delete-remote-files="false"
+		remote-directory="/home/hadoop/data" local-directory="file:/home/ubuntu/localDir">
+		<int:poller fixed-rate="10000" />
+	</int-sftp:inbound-channel-adapter>
+	<file:file-to-string-transformer id="transformer"
+		input-channel="receiveChannel" output-channel="serviceChannel1" />
+
+	<bean id="sftpSessionFactory"
+		class="org.springframework.integration.sftp.session.DefaultSftpSessionFactory">
+		<property name="host" value="localhost" />
+		<property name="privateKey" value="classpath:META-INF/keys/hadoop.pem" />
+		<property name="port" value="22" />
+		<property name="user" value="hadoop" />
+	</bean>
+
+	<!-- JAXB Marshalling transformer to generate object from XML -->
+	<int-xml:unmarshalling-transformer
+		id="unMarshallMessage1" unmarshaller="xmlCastorMarshaller"
+		input-channel="serviceChannel1" output-channel="unMarshallChannel" />
+
+	<bean id="xmlUnMarshaller" name="xmlUnMarshaller"
+		class="org.springframework.oxm.jaxb.Jaxb2Marshaller">
+		<property name="classesToBeBound">
+			<list value-type="java.lang.Class">
+				<value>com.fil.rcsm.model.jaxb.FlightInfo</value>
+			</list>
+		</property>
+	</bean>
+
+	<int:service-activator input-channel="unMarshallChannel"
+		output-channel="parkingLotQueueChannel" method="receiveMessage" ref="messageHandler">
+	</int:service-activator>
+
+	<jms:outbound-channel-adapter channel="queueChannel"
+		destination-name="INPUT.QUEUE" />
+
+	<jms:message-driven-channel-adapter destination-name="INPUT.QUEUE" 
+		channel="processParkingChannel" connection-factory="mqConnectionFactory"/>
+	
+	<int:service-activator input-channel="processParkingChannel"
+		output-channel="nullChannel" method="handleFCRS" ref="messageHandler">
+	</int:service-activator>
+	
+	
+	<bean id="resultTransformer"
+		class="org.springframework.integration.xml.transformer.ResultToStringTransformer" />
+
+	<int-xml:marshalling-transformer id="marshallMessage"
+		marshaller="xmlCastorMarshaller" input-channel="parkingLotQueueChannel"
+		output-channel="queueChannel" result-transformer="resultTransformer" />
+
+	<bean id="xmlCastorMarshaller" name="xmlCastorMarshaller"
+		class="org.springframework.oxm.castor.CastorMarshaller">
+		<property name="mappingLocation" value="classpath:META-INF/spring/mapping.xml" />
+		<property name="targetClass" value="com.fil.rcsm.model.jaxb.FlightInfo" />
+	</bean>
+
+	<bean id="messageHandler" class="com.acme.message.handler.MessageHandler"></bean>
+
+	<!-- MQ Connection -->
+	<bean id="mqConnectionFactory" class="com.ibm.mq.jms.MQQueueConnectionFactory">
+		<property name="hostName">
+			<value>localhost</value>
+		</property>
+		<property name="port">
+			<value>1414</value>
+		</property>
+		<property name="queueManager">
+			<value>QM1</value>
+		</property>
+		<property name="transportType">
+			<value>1</value>
+		</property>
+	</bean>
+
+	<!-- Pooled Spring connection factory -->
+	<bean id="connectionFactory"
+		class="org.springframework.jms.connection.CachingConnectionFactory">
+		<constructor-arg ref="mqConnectionFactory" />
+	</bean>
+    
+    <bean id="listener" class="com.fil.rcsm.eventing.FlightLandedListener" />
+    
+</beans>

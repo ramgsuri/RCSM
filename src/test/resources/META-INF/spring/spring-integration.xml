@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:integration="http://www.springframework.org/schema/integration"
+	xmlns:file="http://www.springframework.org/schema/integration/file"
+	xmlns:jms="http://www.springframework.org/schema/integration/jms"
+	xmlns:si-xml="http://www.springframework.org/schema/integration/xml"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans
+			http://www.springframework.org/schema/beans/spring-beans.xsd
+			http://www.springframework.org/schema/integration
+			http://www.springframework.org/schema/integration/spring-integration.xsd
+			http://www.springframework.org/schema/integration/file
+			http://www.springframework.org/schema/integration/file/spring-integration-file.xsd
+			http://www.springframework.org/schema/integration/jms
+			http://www.springframework.org/schema/integration/jms/spring-integration-jms.xsd
+			http://www.springframework.org/schema/integration/xml
+            http://www.springframework.org/schema/integration/xml/spring-integration-xml.xsd
+			">
+
+    
+	<!-- <file:inbound-channel-adapter id="filesIn"
+	                              directory="file:${java.io.tmpdir}/spring-integration-samples/input">
+	    <integration:poller id="poller" fixed-delay="5000"/>
+	</file:inbound-channel-adapter> -->
+
+
+	<!-- <file:outbound-channel-adapter id="filesOut"
+								   directory="file:${java.io.tmpdir}/spring-integration-samples/output"
+								   delete-source-files="true"/> -->
+	
+	<!-- <jms:message-driven-channel-adapter id="jmsIn"
+									    destination="requestQueue" 
+									    channel="jmsInChannel" /> -->
+
+	<integration:channel id="jmsInChannel"></integration:channel>
+	
+	<si-xml:marshalling-transformer marshaller="jaxBMarshaller" 
+	    input-channel="jaxBInputChannel" output-channel="jaxBOutputChannel"> 
+	</si-xml:marshalling-transformer>
+	
+	<bean id="jaxBMarshaller" class="org.springframework.oxm.jaxb.Jaxb2Marshaller">
+	  <property name="packagesToScan">
+	   <list>
+	     <value>com.fil.rcsm.model.jaxb</value>
+	   </list>
+	  </property>
+	</bean>
+	
+	
+	<integration:service-activator id="transformerService" input-channel="jaxBOutputChannel" 
+	    output-channel="marshalledObjectChannel" method="getResult" >
+	</integration:service-activator>
+	
+	<bean id="transformerService" class="com.fil.rcsm.transformService"> </bean>
+	
+	
+</beans>
